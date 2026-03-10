@@ -16,14 +16,34 @@ One command to setup AI coding agents on cloud servers (Hetzner, AWS, etc.) with
 
 ### Basic Setup (No Reverse Proxy)
 
+**Recommended: Download and review first**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh -o setup.sh
+less setup.sh  # Review the script
+sudo bash setup.sh
+```
+
+**One-line install (executes immediately)**
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo bash
 ```
 
 ### Setup with Caddy and Domain (Auto HTTPS)
 
+**Recommended: Download and review first**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh -o setup.sh
+less setup.sh  # Review the script
+sudo bash setup.sh \
+  --install-caddy \
+  --domain your.domain.com \
+  --username admin \
+  --password 'YourStrongPassword123!'
+```
+
+**One-line install (executes immediately)**
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo bash -s -- \
   --install-caddy \
   --domain your.domain.com \
   --username admin \
@@ -32,13 +52,27 @@ curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | bash 
 
 ### Setup with Caddy for IP-Only Access
 
+**Recommended: Download and review first**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh -o setup.sh
+less setup.sh  # Review the script
+sudo bash setup.sh \
   --install-caddy \
   --ip-only \
   --username admin \
   --password 'YourStrongPassword123!'
 ```
+
+**One-line install (executes immediately)**
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo bash -s -- \
+  --install-caddy \
+  --ip-only \
+  --username admin \
+  --password 'YourStrongPassword123!'
+```
+
+> **Security Note**: Always review scripts before executing them, especially with sudo privileges. The "download and review first" method is recommended for production environments.
 
 ## Usage
 
