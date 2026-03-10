@@ -210,9 +210,15 @@ ${BASICAUTH_BLOCK}
 EOF
     elif [ "$BEHIND_PROXY" = true ]; then
         # HTTP-only configuration for use behind a CDN or reverse proxy that handles TLS.
-        # Using http:// disables Caddy's automatic HTTPS and HTTP->HTTPS redirect,
-        # preventing redirect loops when a CDN terminates TLS and proxies over HTTP.
+        # auto_https off disables all of Caddy's automatic HTTPS behaviour globally,
+        # including certificate acquisition and the HTTP->HTTPS redirect, so that a CDN
+        # (e.g. Bunny CDN, Cloudflare) can terminate TLS and forward plain HTTP to this
+        # server on port 80 without triggering an infinite redirect loop.
         cat > /etc/caddy/Caddyfile << EOF
+{
+    auto_https off
+}
+
 http://${DOMAIN} {
 ${BASICAUTH_BLOCK}
     reverse_proxy localhost:${OPENCODE_PORT}
@@ -248,17 +254,34 @@ EOF
     # Configure firewall if ufw or firewalld is available
     if command -v ufw &> /dev/null; then
         echo "Configuring UFW firewall..."
-        if ! ufw allow 443/tcp > /dev/null 2>&1 || ! ufw allow 80/tcp > /dev/null 2>&1; then
-            echo "Warning: Failed to configure UFW firewall rules."
-            echo "You may need to manually allow ports 80 and 443 for HTTPS access."
+        if [ "$BEHIND_PROXY" = true ]; then
+            # Only port 80 is needed; TLS is terminated at the CDN/proxy
+            if ! ufw allow 80/tcp > /dev/null 2>&1; then
+                echo "Warning: Failed to configure UFW firewall rules."
+                echo "You may need to manually allow port 80 for HTTP access."
+            fi
+        else
+            if ! ufw allow 443/tcp > /dev/null 2>&1 || ! ufw allow 80/tcp > /dev/null 2>&1; then
+                echo "Warning: Failed to configure UFW firewall rules."
+                echo "You may need to manually allow ports 80 and 443 for HTTPS access."
+            fi
         fi
     elif command -v firewall-cmd &> /dev/null; then
         echo "Configuring firewalld..."
-        if ! firewall-cmd --permanent --add-service=https > /dev/null 2>&1 || \
-           ! firewall-cmd --permanent --add-service=http > /dev/null 2>&1 || \
-           ! firewall-cmd --reload > /dev/null 2>&1; then
-            echo "Warning: Failed to configure firewalld rules."
-            echo "You may need to manually allow ports 80 and 443 for HTTPS access."
+        if [ "$BEHIND_PROXY" = true ]; then
+            # Only port 80 is needed; TLS is terminated at the CDN/proxy
+            if ! firewall-cmd --permanent --add-service=http > /dev/null 2>&1 || \
+               ! firewall-cmd --reload > /dev/null 2>&1; then
+                echo "Warning: Failed to configure firewalld rules."
+                echo "You may need to manually allow port 80 for HTTP access."
+            fi
+        else
+            if ! firewall-cmd --permanent --add-service=https > /dev/null 2>&1 || \
+               ! firewall-cmd --permanent --add-service=http > /dev/null 2>&1 || \
+               ! firewall-cmd --reload > /dev/null 2>&1; then
+                echo "Warning: Failed to configure firewalld rules."
+                echo "You may need to manually allow ports 80 and 443 for HTTPS access."
+            fi
         fi
     fi
 fi
