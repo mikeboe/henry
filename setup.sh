@@ -207,7 +207,10 @@ EOF
     fi
     
     # Enable and start Caddy
-    systemctl enable caddy > /dev/null 2>&1
+    if ! systemctl enable caddy > /dev/null 2>&1; then
+        echo "Warning: Failed to enable Caddy service for automatic startup on boot."
+        echo "Caddy will still start now, but won't automatically start after reboot."
+    fi
     if ! systemctl restart caddy > /dev/null 2>&1; then
         echo "Error: Failed to start Caddy. Check logs with: sudo journalctl -u caddy -n 50"
         exit 1
@@ -216,13 +219,18 @@ EOF
     # Configure firewall if ufw or firewalld is available
     if command -v ufw &> /dev/null; then
         echo "Configuring UFW firewall..."
-        ufw allow 443/tcp > /dev/null 2>&1
-        ufw allow 80/tcp > /dev/null 2>&1
+        if ! ufw allow 443/tcp > /dev/null 2>&1 || ! ufw allow 80/tcp > /dev/null 2>&1; then
+            echo "Warning: Failed to configure UFW firewall rules."
+            echo "You may need to manually allow ports 80 and 443 for HTTPS access."
+        fi
     elif command -v firewall-cmd &> /dev/null; then
         echo "Configuring firewalld..."
-        firewall-cmd --permanent --add-service=https > /dev/null 2>&1
-        firewall-cmd --permanent --add-service=http > /dev/null 2>&1
-        firewall-cmd --reload > /dev/null 2>&1
+        if ! firewall-cmd --permanent --add-service=https > /dev/null 2>&1 || \
+           ! firewall-cmd --permanent --add-service=http > /dev/null 2>&1 || \
+           ! firewall-cmd --reload > /dev/null 2>&1; then
+            echo "Warning: Failed to configure firewalld rules."
+            echo "You may need to manually allow ports 80 and 443 for HTTPS access."
+        fi
     fi
 fi
 
