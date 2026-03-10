@@ -72,6 +72,32 @@ curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo 
   --password 'YourStrongPassword123!'
 ```
 
+### Setup with Caddy Behind a CDN or Reverse Proxy
+
+Use this when a CDN (e.g., BunnyCDN, Cloudflare) or another reverse proxy sits in front of Caddy and handles TLS termination. Without this flag, Caddy's automatic HTTP→HTTPS redirect will create an infinite redirect loop because the CDN terminates HTTPS but proxies requests to the origin over HTTP.
+
+**Recommended: Download and review first**
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh -o setup.sh
+less setup.sh  # Review the script
+sudo bash setup.sh \
+  --install-caddy \
+  --domain your.domain.com \
+  --behind-proxy \
+  --username admin \
+  --password 'YourStrongPassword123!'
+```
+
+**One-line install (executes immediately)**
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo bash -s -- \
+  --install-caddy \
+  --domain your.domain.com \
+  --behind-proxy \
+  --username admin \
+  --password 'YourStrongPassword123!'
+```
+
 > **Security Note**: Always review scripts before executing them, especially with sudo privileges. The "download and review first" method is recommended for production environments.
 
 ## Usage
@@ -90,6 +116,7 @@ curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo 
 | `--password PASSWORD` | Password for basic auth | With `--install-caddy` |
 | `--port PORT` | OpenCode port (default: 4096) | No |
 | `--ip-only` | Configure Caddy for IP-only access with self-signed cert | No |
+| `--behind-proxy` | Configure Caddy for HTTP-only mode when behind a CDN/reverse proxy (prevents redirect loops) | No |
 | `-h, --help` | Display help message | No |
 
 ## Examples
@@ -136,7 +163,22 @@ For scenarios without a domain name:
 
 After setup, access OpenCode at: `https://<server-ip>` (you'll see a browser warning about the self-signed certificate, which is expected)
 
-### 4. Custom Port
+### 4. Production Setup Behind a CDN or Reverse Proxy
+
+Use when a CDN (e.g., BunnyCDN, Cloudflare) or reverse proxy handles TLS in front of Caddy. This configures Caddy for HTTP-only mode, preventing redirect loops:
+
+```bash
+./setup.sh \
+  --install-caddy \
+  --domain code.example.com \
+  --behind-proxy \
+  --username admin \
+  --password 'SecurePassword123!'
+```
+
+After setup, configure your CDN/proxy to forward HTTP traffic to this server on port 80.
+
+### 5. Custom Port
 
 Run OpenCode on a custom port:
 
@@ -267,6 +309,30 @@ When using Caddy:
 - ✅ **Firewall Configuration**: Only HTTPS/HTTP ports are opened
 
 ## Troubleshooting
+
+### Too Many Redirects / Redirect Loop (308)
+**Error**: Browser shows "Too many redirects" or the site loops with 308 Permanent Redirect responses
+
+**Cause**: This happens when Caddy is behind a CDN or reverse proxy (e.g., BunnyCDN, Cloudflare) that terminates TLS and forwards requests to the origin over HTTP. Caddy's automatic HTTP→HTTPS redirect creates an infinite loop: CDN → HTTP → Caddy → 308 to HTTPS → CDN follows → HTTP → Caddy → 308... and so on.
+
+**Solution**: Re-run the setup script with `--behind-proxy` to configure Caddy for HTTP-only mode:
+```bash
+sudo bash setup.sh \
+  --install-caddy \
+  --domain your.domain.com \
+  --behind-proxy \
+  --username admin \
+  --password 'YourPassword'
+```
+
+Or manually update the Caddyfile to use the `http://` scheme:
+```bash
+sudo nano /etc/caddy/Caddyfile
+# Change:  your.domain.com {
+# To:      http://your.domain.com {
+caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
 
 ### DNS Not Configured
 **Error**: Certificate issuance fails
