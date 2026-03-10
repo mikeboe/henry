@@ -11,6 +11,7 @@ DOMAIN=""
 CADDY_USERNAME=""
 CADDY_PASSWORD=""
 USE_IP_ONLY=false
+BEHIND_PROXY=false
 
 # Function to display usage
 usage() {
@@ -23,6 +24,7 @@ usage() {
     echo "  --password PASSWORD      Password for basic auth (required with --install-caddy)"
     echo "  --port PORT             OpenCode port (default: 4096)"
     echo "  --ip-only               Configure Caddy for IP-only access with self-signed cert"
+    echo "  --behind-proxy          Configure Caddy for HTTP-only when behind a CDN/reverse proxy (prevents redirect loops)"
     echo "  -h, --help              Display this help message"
     echo ""
     echo "Examples:"
@@ -31,6 +33,9 @@ usage() {
     echo ""
     echo "  # Setup with Caddy and domain (auto HTTPS)"
     echo "  $0 --install-caddy --domain your.domain.com --username admin --password 'SecurePass123!'"
+    echo ""
+    echo "  # Setup with Caddy behind a CDN or reverse proxy (HTTP-only, no redirect loop)"
+    echo "  $0 --install-caddy --domain your.domain.com --behind-proxy --username admin --password 'SecurePass123!'"
     echo ""
     echo "  # Setup with Caddy for IP-only access"
     echo "  $0 --install-caddy --ip-only --username admin --password 'SecurePass123!'"
@@ -65,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             USE_IP_ONLY=true
             shift
             ;;
+        --behind-proxy)
+            BEHIND_PROXY=true
+            shift
+            ;;
         -h|--help)
             usage
             ;;
@@ -93,6 +102,16 @@ if [ "$INSTALL_CADDY" = true ]; then
     
     if [ "$USE_IP_ONLY" = true ] && [ -n "$DOMAIN" ]; then
         echo "Error: Cannot use both --domain and --ip-only"
+        exit 1
+    fi
+    
+    if [ "$BEHIND_PROXY" = true ] && [ "$USE_IP_ONLY" = true ]; then
+        echo "Error: Cannot use both --behind-proxy and --ip-only"
+        exit 1
+    fi
+    
+    if [ "$BEHIND_PROXY" = true ] && [ -z "$DOMAIN" ]; then
+        echo "Error: --domain is required when using --behind-proxy"
         exit 1
     fi
 fi
@@ -189,6 +208,16 @@ ${BASICAUTH_BLOCK}
     reverse_proxy localhost:${OPENCODE_PORT}
 }
 EOF
+    elif [ "$BEHIND_PROXY" = true ]; then
+        # HTTP-only configuration for use behind a CDN or reverse proxy that handles TLS.
+        # Using http:// disables Caddy's automatic HTTPS and HTTP->HTTPS redirect,
+        # preventing redirect loops when a CDN terminates TLS and proxies over HTTP.
+        cat > /etc/caddy/Caddyfile << EOF
+http://${DOMAIN} {
+${BASICAUTH_BLOCK}
+    reverse_proxy localhost:${OPENCODE_PORT}
+}
+EOF
     else
         # Domain configuration with auto HTTPS
         cat > /etc/caddy/Caddyfile << EOF
@@ -260,6 +289,10 @@ if [ "$INSTALL_CADDY" = true ]; then
     if [ "$USE_IP_ONLY" = true ]; then
         echo "Access URL: https://<your-server-ip>"
         echo "Note: You'll see a browser warning (self-signed certificate)"
+    elif [ "$BEHIND_PROXY" = true ]; then
+        echo "Access URL: https://${DOMAIN} (via your CDN/proxy)"
+        echo "Note: Caddy is configured for HTTP-only; your CDN/proxy handles TLS"
+        echo "Note: Ensure your CDN/proxy forwards requests to this server on port 80"
     else
         echo "Access URL: https://${DOMAIN}"
         echo "Note: Ensure DNS for ${DOMAIN} points to this server's IP"
@@ -276,8 +309,11 @@ if [ "$INSTALL_CADDY" = true ]; then
     echo "  ✅ HTTPS enabled"
     echo "  ✅ Password protection active"
     echo "  ✅ OpenCode port (${OPENCODE_PORT}) not exposed publicly"
-    if [ "$USE_IP_ONLY" = false ]; then
+    if [ "$USE_IP_ONLY" = false ] && [ "$BEHIND_PROXY" = false ]; then
         echo "  ✅ Auto certificate renewal"
+    fi
+    if [ "$BEHIND_PROXY" = true ]; then
+        echo "  ✅ HTTP-only mode (TLS handled by CDN/proxy, no redirect loops)"
     fi
     echo ""
 fi
@@ -296,6 +332,8 @@ else
     echo "   opencode-web"
     if [ "$USE_IP_ONLY" = true ]; then
         echo "   Access via: https://<your-server-ip>"
+    elif [ "$BEHIND_PROXY" = true ]; then
+        echo "   Access via: https://${DOMAIN} (via your CDN/proxy)"
     else
         echo "   Access via: https://${DOMAIN}"
     fi
