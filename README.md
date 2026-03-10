@@ -234,6 +234,15 @@ Browser → https://server-ip
     Caddy (443) → OpenCode (localhost:4096)
 ```
 
+### With Caddy Behind a CDN (--behind-proxy)
+```
+Browser → https://your.domain.com
+              ↓
+    Bunny CDN / Cloudflare (TLS termination)
+              ↓ HTTP
+    Caddy (80, auto_https off) → OpenCode (localhost:4096)
+```
+
 ## Post-Installation
 
 ### Start OpenCode
@@ -315,7 +324,7 @@ When using Caddy:
 
 **Cause**: This happens when Caddy is behind a CDN or reverse proxy (e.g., BunnyCDN, Cloudflare) that terminates TLS and forwards requests to the origin over HTTP. Caddy's automatic HTTP→HTTPS redirect creates an infinite loop: CDN → HTTP → Caddy → 308 to HTTPS → CDN follows → HTTP → Caddy → 308... and so on.
 
-**Solution**: Re-run the setup script with `--behind-proxy` to configure Caddy for HTTP-only mode:
+**Solution**: Re-run the setup script with `--behind-proxy` to configure Caddy for HTTP-only mode with `auto_https off`. This completely disables Caddy's TLS certificate acquisition and its HTTP→HTTPS redirect, so that the CDN/proxy can handle all TLS termination:
 ```bash
 sudo bash setup.sh \
   --install-caddy \
@@ -325,14 +334,27 @@ sudo bash setup.sh \
   --password 'YourPassword'
 ```
 
-Or manually update the Caddyfile to use the `http://` scheme:
+Or manually update the Caddyfile to add the global `auto_https off` block and use the `http://` scheme:
 ```bash
 sudo nano /etc/caddy/Caddyfile
-# Change:  your.domain.com {
-# To:      http://your.domain.com {
+# Replace with:
+# {
+#     auto_https off
+# }
+#
+# http://your.domain.com {
+#     basicauth * { ... }
+#     reverse_proxy localhost:4096
+# }
 caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
+
+**Bunny CDN-specific checklist:**
+1. In your Bunny CDN Pull Zone settings, set the **Origin URL** to `http://your-server-ip` (plain HTTP, port 80)
+2. Enable **Force HTTPS** on the Bunny CDN side (Bunny handles the TLS, not Caddy)
+3. Ensure your server firewall allows port **80** from Bunny CDN edge nodes
+4. Use `--behind-proxy` when running setup so Caddy runs with `auto_https off`
 
 ### DNS Not Configured
 **Error**: Certificate issuance fails
