@@ -135,12 +135,18 @@ if [ "$INSTALL_CADDY" = true ]; then
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' 2>/dev/null | tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
         apt update > /dev/null 2>&1
-        apt install -y caddy > /dev/null 2>&1
+        if ! apt install -y caddy > /dev/null 2>&1; then
+            echo "Error: Failed to install Caddy. Please check your internet connection and package repositories."
+            exit 1
+        fi
     elif command -v dnf &> /dev/null; then
         # RHEL/Fedora
         dnf install -y 'dnf-command(copr)' > /dev/null 2>&1
         dnf copr enable -y @caddy/caddy > /dev/null 2>&1
-        dnf install -y caddy > /dev/null 2>&1
+        if ! dnf install -y caddy > /dev/null 2>&1; then
+            echo "Error: Failed to install Caddy. Please check your internet connection and package repositories."
+            exit 1
+        fi
     else
         echo "Error: Unsupported OS. Please install Caddy manually."
         exit 1
@@ -149,7 +155,9 @@ fi
 
 # Step 7: Install OpenCode
 echo "Installing OpenCode..."
-curl -fsSL https://opencode.ai/install 2>/dev/null | bash > /dev/null 2>&1
+if ! curl -fsSL https://opencode.ai/install 2>/dev/null | bash > /dev/null 2>&1; then
+    echo "Warning: OpenCode installation may have encountered issues. You can manually install it later."
+fi
 
 # Step 8: Create projects folder
 echo "Creating projects folder..."
@@ -161,6 +169,15 @@ if [ "$INSTALL_CADDY" = true ]; then
     
     # Generate hashed password
     HASHED_PASSWORD=$(caddy hash-password --plaintext "$CADDY_PASSWORD" 2>/dev/null)
+    if [ -z "$HASHED_PASSWORD" ]; then
+        echo "Error: Failed to generate password hash. Please check Caddy installation."
+        exit 1
+    fi
+    
+    # Prepare basicauth block (used in both configurations)
+    BASICAUTH_BLOCK="    basicauth * {
+        ${CADDY_USERNAME} ${HASHED_PASSWORD}
+    }"
     
     # Create Caddyfile
     if [ "$USE_IP_ONLY" = true ]; then
@@ -168,9 +185,7 @@ if [ "$INSTALL_CADDY" = true ]; then
         cat > /etc/caddy/Caddyfile << EOF
 :443 {
     tls internal
-    basicauth * {
-        ${CADDY_USERNAME} ${HASHED_PASSWORD}
-    }
+${BASICAUTH_BLOCK}
     reverse_proxy localhost:${OPENCODE_PORT}
 }
 EOF
@@ -178,20 +193,25 @@ EOF
         # Domain configuration with auto HTTPS
         cat > /etc/caddy/Caddyfile << EOF
 ${DOMAIN} {
-    basicauth * {
-        ${CADDY_USERNAME} ${HASHED_PASSWORD}
-    }
+${BASICAUTH_BLOCK}
     reverse_proxy localhost:${OPENCODE_PORT}
 }
 EOF
     fi
     
     # Validate Caddyfile
-    caddy validate --config /etc/caddy/Caddyfile > /dev/null 2>&1
+    if ! caddy validate --config /etc/caddy/Caddyfile > /dev/null 2>&1; then
+        echo "Error: Caddyfile validation failed. Configuration may be invalid."
+        echo "Please check /etc/caddy/Caddyfile for errors."
+        exit 1
+    fi
     
     # Enable and start Caddy
     systemctl enable caddy > /dev/null 2>&1
-    systemctl restart caddy > /dev/null 2>&1
+    if ! systemctl restart caddy > /dev/null 2>&1; then
+        echo "Error: Failed to start Caddy. Check logs with: sudo journalctl -u caddy -n 50"
+        exit 1
+    fi
     
     # Configure firewall if ufw or firewalld is available
     if command -v ufw &> /dev/null; then
