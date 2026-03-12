@@ -188,7 +188,11 @@ if [ "$INSTALL_CADDY" = true ]; then
         cat > /etc/caddy/Caddyfile << EOF
 :443 {
     tls internal
-    reverse_proxy localhost:${OPENCODE_PORT}
+    reverse_proxy localhost:${OPENCODE_PORT} {
+        header_up Host {upstream_hostport}
+        header_up X-Forwarded-Proto {scheme}
+        flush_interval -1
+    }
 }
 EOF
     elif [ "$BEHIND_PROXY" = true ]; then
@@ -197,20 +201,35 @@ EOF
         # including certificate acquisition and the HTTP->HTTPS redirect, so that a CDN
         # (e.g. Bunny CDN, Cloudflare) can terminate TLS and forward plain HTTP to this
         # server on port 80 without triggering an infinite redirect loop.
+        #
+        # X-Forwarded-Proto is hardcoded to "https" because Caddy receives plain HTTP from
+        # the CDN but the original client connection is HTTPS. Without this, OpenCode would
+        # generate ws:// WebSocket URLs instead of wss://, which browsers reject on HTTPS
+        # pages and cause constant reconnection / password prompts.
+        # flush_interval -1 disables response buffering, which is required for WebSocket
+        # and other streaming connections to work correctly through the proxy.
         cat > /etc/caddy/Caddyfile << EOF
 {
     auto_https off
 }
 
 http://${DOMAIN} {
-    reverse_proxy localhost:${OPENCODE_PORT}
+    reverse_proxy localhost:${OPENCODE_PORT} {
+        header_up Host {upstream_hostport}
+        header_up X-Forwarded-Proto https
+        flush_interval -1
+    }
 }
 EOF
     else
         # Domain configuration with auto HTTPS
         cat > /etc/caddy/Caddyfile << EOF
 ${DOMAIN} {
-    reverse_proxy localhost:${OPENCODE_PORT}
+    reverse_proxy localhost:${OPENCODE_PORT} {
+        header_up Host {upstream_hostport}
+        header_up X-Forwarded-Proto {scheme}
+        flush_interval -1
+    }
 }
 EOF
     fi
