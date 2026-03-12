@@ -8,8 +8,8 @@ set -e
 OPENCODE_PORT=4096
 INSTALL_CADDY=false
 DOMAIN=""
-CADDY_USERNAME=""
-CADDY_PASSWORD=""
+OPENCODE_USERNAME=""
+OPENCODE_PASSWORD=""
 USE_IP_ONLY=false
 BEHIND_PROXY=false
 
@@ -20,8 +20,8 @@ usage() {
     echo "Options:"
     echo "  --install-caddy          Install and configure Caddy reverse proxy"
     echo "  --domain DOMAIN          Domain name for Caddy (enables auto HTTPS)"
-    echo "  --username USERNAME      Username for basic auth (default: admin)"
-    echo "  --password PASSWORD      Password for basic auth (required with --install-caddy)"
+    echo "  --username USERNAME      Username for OpenCode web server (default: opencode)"
+    echo "  --password PASSWORD      Password for OpenCode web server (required with --install-caddy)"
     echo "  --port PORT             OpenCode port (default: 4096)"
     echo "  --ip-only               Configure Caddy for IP-only access with self-signed cert"
     echo "  --behind-proxy          Configure Caddy for HTTP-only when behind a CDN/reverse proxy (prevents redirect loops)"
@@ -32,13 +32,13 @@ usage() {
     echo "  $0"
     echo ""
     echo "  # Setup with Caddy and domain (auto HTTPS)"
-    echo "  $0 --install-caddy --domain your.domain.com --username admin --password 'SecurePass123!'"
+    echo "  $0 --install-caddy --domain your.domain.com --password 'SecurePass123!'"
     echo ""
     echo "  # Setup with Caddy behind a CDN or reverse proxy (HTTP-only, no redirect loop)"
-    echo "  $0 --install-caddy --domain your.domain.com --behind-proxy --username admin --password 'SecurePass123!'"
+    echo "  $0 --install-caddy --domain your.domain.com --behind-proxy --password 'SecurePass123!'"
     echo ""
     echo "  # Setup with Caddy for IP-only access"
-    echo "  $0 --install-caddy --ip-only --username admin --password 'SecurePass123!'"
+    echo "  $0 --install-caddy --ip-only --password 'SecurePass123!'"
     echo ""
     exit 1
 }
@@ -55,11 +55,11 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --username)
-            CADDY_USERNAME="$2"
+            OPENCODE_USERNAME="$2"
             shift 2
             ;;
         --password)
-            CADDY_PASSWORD="$2"
+            OPENCODE_PASSWORD="$2"
             shift 2
             ;;
         --port)
@@ -86,13 +86,9 @@ done
 
 # Validate Caddy options
 if [ "$INSTALL_CADDY" = true ]; then
-    if [ -z "$CADDY_PASSWORD" ]; then
+    if [ -z "$OPENCODE_PASSWORD" ]; then
         echo "Error: --password is required when using --install-caddy"
         exit 1
-    fi
-    
-    if [ -z "$CADDY_USERNAME" ]; then
-        CADDY_USERNAME="admin"
     fi
     
     if [ "$USE_IP_ONLY" = false ] && [ -z "$DOMAIN" ]; then
@@ -186,25 +182,12 @@ mkdir -p ~/projects
 if [ "$INSTALL_CADDY" = true ]; then
     echo "Configuring Caddy..."
     
-    # Generate hashed password
-    HASHED_PASSWORD=$(caddy hash-password --plaintext "$CADDY_PASSWORD" 2>/dev/null)
-    if [ -z "$HASHED_PASSWORD" ]; then
-        echo "Error: Failed to generate password hash. Please check Caddy installation."
-        exit 1
-    fi
-    
-    # Prepare basicauth block (used in both configurations)
-    BASICAUTH_BLOCK="    basicauth * {
-        ${CADDY_USERNAME} ${HASHED_PASSWORD}
-    }"
-    
     # Create Caddyfile
     if [ "$USE_IP_ONLY" = true ]; then
         # IP-only configuration with self-signed certificate
         cat > /etc/caddy/Caddyfile << EOF
 :443 {
     tls internal
-${BASICAUTH_BLOCK}
     reverse_proxy localhost:${OPENCODE_PORT}
 }
 EOF
@@ -220,7 +203,6 @@ EOF
 }
 
 http://${DOMAIN} {
-${BASICAUTH_BLOCK}
     reverse_proxy localhost:${OPENCODE_PORT}
 }
 EOF
@@ -228,7 +210,6 @@ EOF
         # Domain configuration with auto HTTPS
         cat > /etc/caddy/Caddyfile << EOF
 ${DOMAIN} {
-${BASICAUTH_BLOCK}
     reverse_proxy localhost:${OPENCODE_PORT}
 }
 EOF
@@ -288,16 +269,29 @@ fi
 
 # Step 10: Add aliases to bashrc
 echo "Creating shortcuts..."
-cat >> ~/.bashrc << 'EOF'
+
+# Export OpenCode auth env vars to a secure file if provided
+if [ -n "$OPENCODE_PASSWORD" ]; then
+    touch ~/.opencode_env
+    chmod 600 ~/.opencode_env
+    printf 'export OPENCODE_SERVER_PASSWORD=%q\n' "$OPENCODE_PASSWORD" > ~/.opencode_env
+    if [ -n "$OPENCODE_USERNAME" ]; then
+        printf 'export OPENCODE_SERVER_USERNAME=%q\n' "$OPENCODE_USERNAME" >> ~/.opencode_env
+    fi
+fi
+
+cat >> ~/.bashrc << 'BASHRC_EOF'
 
 # Coding Environment aliases
+# Source OpenCode auth env vars (stored securely with chmod 600)
+[ -f "$HOME/.opencode_env" ] && . "$HOME/.opencode_env"
 alias opencode-web="opencode web --hostname 0.0.0.0 --port 4096"
 
 # Load NVM on login
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
-EOF
+BASHRC_EOF
 
 # Step 11: Source bashrc
 source ~/.bashrc
@@ -322,7 +316,7 @@ if [ "$INSTALL_CADDY" = true ]; then
     fi
     echo ""
     echo "Credentials:"
-    echo "  Username: ${CADDY_USERNAME}"
+    echo "  Username: ${OPENCODE_USERNAME:-opencode}"
     echo "  Password: [provided during setup]"
     echo ""
     echo "Caddy Status:"
@@ -330,7 +324,7 @@ if [ "$INSTALL_CADDY" = true ]; then
     echo ""
     echo "Features:"
     echo "  ✅ HTTPS enabled"
-    echo "  ✅ Password protection active"
+    echo "  ✅ Password protection via OpenCode authentication"
     echo "  ✅ OpenCode port (${OPENCODE_PORT}) not exposed publicly"
     if [ "$USE_IP_ONLY" = false ] && [ "$BEHIND_PROXY" = false ]; then
         echo "  ✅ Auto certificate renewal"

@@ -7,7 +7,7 @@ One command to setup AI coding agents on cloud servers (Hetzner, AWS, etc.) with
 - ✅ Automated setup of development environment (Docker, Git, Node.js, Python, etc.)
 - ✅ OpenCode installation for AI-powered coding
 - ✅ Optional Caddy reverse proxy with auto HTTPS
-- ✅ Password-protected access with basic authentication
+- ✅ Password-protected access via OpenCode authentication
 - ✅ Support for both domain-based and IP-only configurations
 - ✅ Automatic firewall configuration
 - ✅ Zero-downtime certificate renewal
@@ -37,7 +37,6 @@ less setup.sh  # Review the script
 sudo bash setup.sh \
   --install-caddy \
   --domain your.domain.com \
-  --username admin \
   --password 'YourStrongPassword123!'
 ```
 
@@ -46,7 +45,6 @@ sudo bash setup.sh \
 curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo bash -s -- \
   --install-caddy \
   --domain your.domain.com \
-  --username admin \
   --password 'YourStrongPassword123!'
 ```
 
@@ -59,7 +57,6 @@ less setup.sh  # Review the script
 sudo bash setup.sh \
   --install-caddy \
   --ip-only \
-  --username admin \
   --password 'YourStrongPassword123!'
 ```
 
@@ -68,7 +65,6 @@ sudo bash setup.sh \
 curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo bash -s -- \
   --install-caddy \
   --ip-only \
-  --username admin \
   --password 'YourStrongPassword123!'
 ```
 
@@ -84,7 +80,6 @@ sudo bash setup.sh \
   --install-caddy \
   --domain your.domain.com \
   --behind-proxy \
-  --username admin \
   --password 'YourStrongPassword123!'
 ```
 
@@ -94,7 +89,6 @@ curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo 
   --install-caddy \
   --domain your.domain.com \
   --behind-proxy \
-  --username admin \
   --password 'YourStrongPassword123!'
 ```
 
@@ -112,8 +106,8 @@ curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo 
 |--------|-------------|----------|
 | `--install-caddy` | Install and configure Caddy reverse proxy | No |
 | `--domain DOMAIN` | Domain name for Caddy (enables auto HTTPS) | With `--install-caddy` (or use `--ip-only`) |
-| `--username USERNAME` | Username for basic auth (default: admin) | No |
-| `--password PASSWORD` | Password for basic auth | With `--install-caddy` |
+| `--username USERNAME` | Username for OpenCode web server (default: `opencode`) | No |
+| `--password PASSWORD` | Password for OpenCode web server | With `--install-caddy` |
 | `--port PORT` | OpenCode port (default: 4096) | No |
 | `--ip-only` | Configure Caddy for IP-only access with self-signed cert | No |
 | `--behind-proxy` | Configure Caddy for HTTP-only mode when behind a CDN/reverse proxy (prevents redirect loops) | No |
@@ -139,7 +133,6 @@ Best for production use with automatic HTTPS certificates:
 ./setup.sh \
   --install-caddy \
   --domain code.example.com \
-  --username admin \
   --password 'SecurePassword123!'
 ```
 
@@ -157,7 +150,6 @@ For scenarios without a domain name:
 ./setup.sh \
   --install-caddy \
   --ip-only \
-  --username myuser \
   --password 'MySecurePassword!'
 ```
 
@@ -172,7 +164,6 @@ Use when a CDN (e.g., BunnyCDN, Cloudflare) or reverse proxy handles TLS in fron
   --install-caddy \
   --domain code.example.com \
   --behind-proxy \
-  --username admin \
   --password 'SecurePassword123!'
 ```
 
@@ -186,9 +177,20 @@ Run OpenCode on a custom port:
 ./setup.sh \
   --install-caddy \
   --domain code.example.com \
-  --username admin \
   --password 'SecurePassword123!' \
   --port 8080
+```
+
+### 6. Custom Username
+
+Override the default OpenCode username (default is `opencode`):
+
+```bash
+./setup.sh \
+  --install-caddy \
+  --domain code.example.com \
+  --username myuser \
+  --password 'SecurePassword123!'
 ```
 
 ## What Gets Installed
@@ -205,7 +207,6 @@ Run OpenCode on a custom port:
 ### With `--install-caddy`
 - Caddy web server
 - Automatic HTTPS certificates (with domain) or self-signed certificates (IP-only)
-- Basic authentication
 - Reverse proxy configuration
 - Firewall rules (UFW or firewalld)
 
@@ -220,18 +221,18 @@ Browser → http://server-ip:4096 → OpenCode
 ```
 Browser → https://your.domain.com
               ↓
-        [Basic Auth Prompt]
-              ↓
     Caddy (443) → OpenCode (localhost:4096)
+                      ↓
+              [OpenCode Auth Prompt]
 ```
 
 ### With Caddy (IP-Only)
 ```
 Browser → https://server-ip
               ↓
-        [Basic Auth Prompt + Self-Signed Cert Warning]
-              ↓
-    Caddy (443) → OpenCode (localhost:4096)
+    Caddy (443, self-signed) → OpenCode (localhost:4096)
+                                     ↓
+                             [OpenCode Auth Prompt]
 ```
 
 ### With Caddy Behind a CDN (--behind-proxy)
@@ -261,6 +262,17 @@ The web interface will be accessible at:
 - Without Caddy: `http://<server-ip>:4096`
 - With Caddy + Domain: `https://your.domain.com`
 - With Caddy + IP-only: `https://<server-ip>`
+
+### OpenCode Authentication
+
+When `--password` is provided during setup, the following environment variables are automatically saved to `~/.opencode_env` (with `chmod 600` for security) and sourced from `~/.bashrc`:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `OPENCODE_SERVER_PASSWORD` | Password for the OpenCode web server | Yes (with `--install-caddy`) |
+| `OPENCODE_SERVER_USERNAME` | Username for the OpenCode web server | No (defaults to `opencode`) |
+
+These variables are picked up by OpenCode when the `opencode-web` alias is run.
 
 ### Managing Caddy
 
@@ -292,27 +304,32 @@ caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-### Changing Password
+### Changing OpenCode Password
 
-To change the basic auth password:
+To change the OpenCode web server password:
 
-1. Generate a new hashed password:
+1. Edit `~/.opencode_env` and update the `OPENCODE_SERVER_PASSWORD` value:
 ```bash
-caddy hash-password --plaintext 'NewPassword123!'
+nano ~/.opencode_env
+# Update the line:
+# export OPENCODE_SERVER_PASSWORD='NewPassword123!'
 ```
 
-2. Update `/etc/caddy/Caddyfile` with the new hash
-
-3. Reload Caddy:
+2. Re-source the file (or open a new terminal session):
 ```bash
-sudo systemctl reload caddy
+source ~/.opencode_env
+```
+
+3. Restart the OpenCode web server (stop the current `opencode-web` process and start it again):
+```bash
+opencode-web
 ```
 
 ## Security Features
 
 When using Caddy:
 - ✅ **HTTPS Encryption**: All traffic is encrypted
-- ✅ **Password Protection**: Basic authentication protects access
+- ✅ **Password Protection**: OpenCode authentication protects access
 - ✅ **Port Isolation**: OpenCode port not exposed publicly
 - ✅ **Auto Certificate Renewal**: Let's Encrypt certificates auto-renew (domain mode)
 - ✅ **Firewall Configuration**: Only HTTPS/HTTP ports are opened
@@ -330,7 +347,6 @@ sudo bash setup.sh \
   --install-caddy \
   --domain your.domain.com \
   --behind-proxy \
-  --username admin \
   --password 'YourPassword'
 ```
 
@@ -343,7 +359,6 @@ sudo nano /etc/caddy/Caddyfile
 # }
 #
 # http://your.domain.com {
-#     basicauth * { ... }
 #     reverse_proxy localhost:4096
 # }
 caddy validate --config /etc/caddy/Caddyfile
