@@ -195,6 +195,12 @@ apt upgrade -y > /dev/null 2>&1
 echo "Installing essentials..."
 apt install -y tmux git curl build-essential python3-pip unzip docker.io > /dev/null 2>&1
 
+# Install GO
+echo "Installing Go..."
+rm -rf /usr/local/go && tar -C /usr/local -xzf go1.26.1.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
+go version > /dev/null 2>&1
+
 # Step 3: Install NVM (Node Version Manager)
 echo "Installing NVM..."
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh 2>/dev/null | bash > /dev/null 2>&1
