@@ -12,6 +12,12 @@ OPENCODE_USERNAME=""
 OPENCODE_PASSWORD=""
 USE_IP_ONLY=false
 BEHIND_PROXY=false
+USE_OAUTH2_PROXY=false
+OAUTH2_GOOGLE_CLIENT_ID=""
+OAUTH2_GOOGLE_CLIENT_SECRET=""
+OAUTH2_COOKIE_SECRET=""
+OAUTH2_ALLOWED_EMAIL_DOMAIN=""
+OAUTH2_ALLOWED_EMAIL=""
 
 # Function to display usage
 usage() {
@@ -21,10 +27,16 @@ usage() {
     echo "  --install-caddy          Install and configure Caddy reverse proxy"
     echo "  --domain DOMAIN          Domain name for Caddy (enables auto HTTPS)"
     echo "  --username USERNAME      Username for OpenCode web server (default: opencode)"
-    echo "  --password PASSWORD      Password for OpenCode web server (required with --install-caddy)"
+    echo "  --password PASSWORD      Password for OpenCode web server (required with --install-caddy, unless using --oauth2-proxy)"
     echo "  --port PORT             OpenCode port (default: 4096)"
     echo "  --ip-only               Configure Caddy for IP-only access with self-signed cert"
     echo "  --behind-proxy          Configure Caddy for HTTP-only when behind a CDN/reverse proxy (prevents redirect loops)"
+    echo "  --oauth2-proxy          Enable oauth2-proxy with Google login for Caddy authentication"
+    echo "  --google-client-id ID   Google OAuth2 client ID (required with --oauth2-proxy)"
+    echo "  --google-client-secret S Google OAuth2 client secret (required with --oauth2-proxy)"
+    echo "  --cookie-secret SECRET  Cookie secret for oauth2-proxy, 16/24/32 chars (required with --oauth2-proxy)"
+    echo "  --allowed-email-domain D Restrict Google login to this email domain, e.g. yourcompany.com (default: * = any)"
+    echo "  --allowed-email EMAIL   Restrict Google login to a specific email address"
     echo "  -h, --help              Display this help message"
     echo ""
     echo "Examples:"
@@ -33,6 +45,9 @@ usage() {
     echo ""
     echo "  # Setup with Caddy and domain (auto HTTPS)"
     echo "  $0 --install-caddy --domain your.domain.com --password 'SecurePass123!'"
+    echo ""
+    echo "  # Setup with Caddy and Google OAuth2 login via oauth2-proxy"
+    echo "  $0 --install-caddy --domain your.domain.com --oauth2-proxy --google-client-id YOUR_ID --google-client-secret YOUR_SECRET --cookie-secret 'YOUR16BYTESECRET'"
     echo ""
     echo "  # Setup with Caddy behind a CDN or reverse proxy (HTTP-only, no redirect loop)"
     echo "  $0 --install-caddy --domain your.domain.com --behind-proxy --password 'SecurePass123!'"
@@ -74,6 +89,30 @@ while [[ $# -gt 0 ]]; do
             BEHIND_PROXY=true
             shift
             ;;
+        --oauth2-proxy)
+            USE_OAUTH2_PROXY=true
+            shift
+            ;;
+        --google-client-id)
+            OAUTH2_GOOGLE_CLIENT_ID="$2"
+            shift 2
+            ;;
+        --google-client-secret)
+            OAUTH2_GOOGLE_CLIENT_SECRET="$2"
+            shift 2
+            ;;
+        --cookie-secret)
+            OAUTH2_COOKIE_SECRET="$2"
+            shift 2
+            ;;
+        --allowed-email-domain)
+            OAUTH2_ALLOWED_EMAIL_DOMAIN="$2"
+            shift 2
+            ;;
+        --allowed-email)
+            OAUTH2_ALLOWED_EMAIL="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             ;;
@@ -86,8 +125,8 @@ done
 
 # Validate Caddy options
 if [ "$INSTALL_CADDY" = true ]; then
-    if [ -z "$OPENCODE_PASSWORD" ]; then
-        echo "Error: --password is required when using --install-caddy"
+    if [ "$USE_OAUTH2_PROXY" = false ] && [ -z "$OPENCODE_PASSWORD" ]; then
+        echo "Error: --password is required when using --install-caddy (unless using --oauth2-proxy)"
         exit 1
     fi
     
@@ -108,6 +147,37 @@ if [ "$INSTALL_CADDY" = true ]; then
     
     if [ "$BEHIND_PROXY" = true ] && [ -z "$DOMAIN" ]; then
         echo "Error: --domain is required when using --behind-proxy"
+        exit 1
+    fi
+fi
+
+# Validate oauth2-proxy options
+if [ "$USE_OAUTH2_PROXY" = true ]; then
+    if [ "$INSTALL_CADDY" = false ]; then
+        echo "Error: --oauth2-proxy requires --install-caddy"
+        exit 1
+    fi
+    if [ "$USE_IP_ONLY" = true ]; then
+        echo "Error: --oauth2-proxy cannot be combined with --ip-only."
+        echo "Google OAuth2 requires a domain (registered redirect URI) — raw IP addresses are not supported."
+        echo "Use --domain with a valid domain name, or use --password for IP-only access."
+        exit 1
+    fi
+    if [ -z "$OAUTH2_GOOGLE_CLIENT_ID" ]; then
+        echo "Error: --google-client-id is required when using --oauth2-proxy"
+        exit 1
+    fi
+    if [ -z "$OAUTH2_GOOGLE_CLIENT_SECRET" ]; then
+        echo "Error: --google-client-secret is required when using --oauth2-proxy"
+        exit 1
+    fi
+    if [ -z "$OAUTH2_COOKIE_SECRET" ]; then
+        echo "Error: --cookie-secret is required when using --oauth2-proxy (must be 16, 24, or 32 characters)"
+        exit 1
+    fi
+    COOKIE_SECRET_LEN=${#OAUTH2_COOKIE_SECRET}
+    if [ "$COOKIE_SECRET_LEN" -ne 16 ] && [ "$COOKIE_SECRET_LEN" -ne 24 ] && [ "$COOKIE_SECRET_LEN" -ne 32 ]; then
+        echo "Error: --cookie-secret must be exactly 16, 24, or 32 characters (got ${COOKIE_SECRET_LEN})"
         exit 1
     fi
 fi
@@ -168,6 +238,35 @@ if [ "$INSTALL_CADDY" = true ]; then
     fi
 fi
 
+# Step 6a: Install oauth2-proxy (if requested)
+if [ "$USE_OAUTH2_PROXY" = true ]; then
+    echo "Installing oauth2-proxy..."
+    OAUTH2_PROXY_ARCH="amd64"
+    case "$(uname -m)" in
+        aarch64|arm64) OAUTH2_PROXY_ARCH="arm64" ;;
+    esac
+    OAUTH2_PROXY_VERSION=$(curl -s https://api.github.com/repos/oauth2-proxy/oauth2-proxy/releases/latest 2>/dev/null | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+    OAUTH2_PROXY_VERSION="${OAUTH2_PROXY_VERSION:-7.8.1}"
+    OAUTH2_PROXY_TGZ="/tmp/oauth2-proxy-v${OAUTH2_PROXY_VERSION}.linux-${OAUTH2_PROXY_ARCH}.tar.gz"
+    OAUTH2_PROXY_URL="https://github.com/oauth2-proxy/oauth2-proxy/releases/download/v${OAUTH2_PROXY_VERSION}/oauth2-proxy-v${OAUTH2_PROXY_VERSION}.linux-${OAUTH2_PROXY_ARCH}.tar.gz"
+    if ! curl -fsSL "$OAUTH2_PROXY_URL" -o "$OAUTH2_PROXY_TGZ" 2>/dev/null; then
+        echo "Error: Failed to download oauth2-proxy from ${OAUTH2_PROXY_URL}. Please check your internet connection."
+        exit 1
+    fi
+    if ! tar -xz -C /tmp -f "$OAUTH2_PROXY_TGZ" > /dev/null 2>&1; then
+        echo "Error: Failed to extract oauth2-proxy archive. The download may be corrupt."
+        rm -f "$OAUTH2_PROXY_TGZ"
+        exit 1
+    fi
+    rm -f "$OAUTH2_PROXY_TGZ"
+    if ! mv "/tmp/oauth2-proxy-v${OAUTH2_PROXY_VERSION}.linux-${OAUTH2_PROXY_ARCH}/oauth2-proxy" /usr/local/bin/oauth2-proxy; then
+        echo "Error: Failed to install oauth2-proxy binary."
+        exit 1
+    fi
+    chmod +x /usr/local/bin/oauth2-proxy
+    rm -rf "/tmp/oauth2-proxy-v${OAUTH2_PROXY_VERSION}.linux-${OAUTH2_PROXY_ARCH}"
+fi
+
 # Step 7: Install OpenCode
 echo "Installing OpenCode..."
 if ! curl -fsSL https://opencode.ai/install 2>/dev/null | bash > /dev/null 2>&1; then
@@ -183,7 +282,62 @@ if [ "$INSTALL_CADDY" = true ]; then
     echo "Configuring Caddy..."
     
     # Create Caddyfile
-    if [ "$USE_IP_ONLY" = true ]; then
+    if [ "$USE_OAUTH2_PROXY" = true ] && [ "$BEHIND_PROXY" = true ]; then
+        # HTTP-only with oauth2-proxy, behind a CDN or reverse proxy that handles TLS.
+        # See non-oauth2-proxy block below for a full explanation of auto_https off and
+        # X-Forwarded-Proto hardcoding.  The redir target uses https:// explicitly because
+        # {scheme} would be "http" (Caddy sees plain HTTP from the CDN).
+        cat > /etc/caddy/Caddyfile << EOF
+{
+    auto_https off
+}
+
+http://${DOMAIN} {
+    handle /oauth2/* {
+        reverse_proxy localhost:4180
+    }
+    handle {
+        forward_auth localhost:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-User X-Auth-Request-Email
+            @oauth2_401 status 401
+            handle_response @oauth2_401 {
+                redir * /oauth2/sign_in?rd=https://{host}{uri}
+            }
+        }
+        reverse_proxy localhost:${OPENCODE_PORT} {
+            header_up Host {upstream_hostport}
+            header_up X-Forwarded-Proto https
+            flush_interval -1
+        }
+    }
+}
+EOF
+    elif [ "$USE_OAUTH2_PROXY" = true ]; then
+        # Domain with auto HTTPS and oauth2-proxy
+        cat > /etc/caddy/Caddyfile << EOF
+${DOMAIN} {
+    handle /oauth2/* {
+        reverse_proxy localhost:4180
+    }
+    handle {
+        forward_auth localhost:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-User X-Auth-Request-Email
+            @oauth2_401 status 401
+            handle_response @oauth2_401 {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
+        }
+        reverse_proxy localhost:${OPENCODE_PORT} {
+            header_up Host {upstream_hostport}
+            header_up X-Forwarded-Proto {scheme}
+            flush_interval -1
+        }
+    }
+}
+EOF
+    elif [ "$USE_IP_ONLY" = true ]; then
         # IP-only configuration with self-signed certificate
         cat > /etc/caddy/Caddyfile << EOF
 :443 {
@@ -286,6 +440,67 @@ EOF
     fi
 fi
 
+# Step 9a: Configure oauth2-proxy (if requested)
+if [ "$USE_OAUTH2_PROXY" = true ]; then
+    echo "Configuring oauth2-proxy..."
+    
+    mkdir -p /etc/oauth2-proxy
+    
+    # Determine the redirect URL (IP-only is blocked at validation; only domain modes reach here)
+    OAUTH2_REDIRECT_URL="https://${DOMAIN}/oauth2/callback"
+    
+    # Build the email restriction config lines
+    if [ -n "$OAUTH2_ALLOWED_EMAIL" ]; then
+        # Restrict to a specific email address via an authenticated emails file
+        printf '%s\n' "$OAUTH2_ALLOWED_EMAIL" > /etc/oauth2-proxy/authenticated-emails.txt
+        chmod 600 /etc/oauth2-proxy/authenticated-emails.txt
+        EMAIL_CONFIG="authenticated_emails_file = \"/etc/oauth2-proxy/authenticated-emails.txt\""
+    elif [ -n "$OAUTH2_ALLOWED_EMAIL_DOMAIN" ]; then
+        EMAIL_CONFIG="email_domains = [ \"${OAUTH2_ALLOWED_EMAIL_DOMAIN}\" ]"
+    else
+        EMAIL_CONFIG="email_domains = [ \"*\" ]"
+    fi
+    
+    # Write the config file (credentials stored with chmod 600)
+    cat > /etc/oauth2-proxy/oauth2-proxy.cfg << EOF
+provider = "google"
+client_id = "${OAUTH2_GOOGLE_CLIENT_ID}"
+client_secret = "${OAUTH2_GOOGLE_CLIENT_SECRET}"
+redirect_url = "${OAUTH2_REDIRECT_URL}"
+cookie_secret = "${OAUTH2_COOKIE_SECRET}"
+${EMAIL_CONFIG}
+http_address = "127.0.0.1:4180"
+reverse_proxy = true
+skip_provider_button = true
+EOF
+    chmod 600 /etc/oauth2-proxy/oauth2-proxy.cfg
+    
+    # Create systemd service for oauth2-proxy
+    cat > /etc/systemd/system/oauth2-proxy.service << 'SERVICE_EOF'
+[Unit]
+Description=oauth2-proxy
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/oauth2-proxy --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+    
+    systemctl daemon-reload > /dev/null 2>&1
+    if ! systemctl enable oauth2-proxy > /dev/null 2>&1; then
+        echo "Warning: Failed to enable oauth2-proxy service for automatic startup on boot."
+    fi
+    if ! systemctl restart oauth2-proxy > /dev/null 2>&1; then
+        echo "Error: Failed to start oauth2-proxy. Check logs with: sudo journalctl -u oauth2-proxy -n 50"
+        exit 1
+    fi
+fi
+
 # Step 10: Add aliases to bashrc
 echo "Creating shortcuts..."
 
@@ -334,16 +549,30 @@ if [ "$INSTALL_CADDY" = true ]; then
         echo "Note: Ensure DNS for ${DOMAIN} points to this server's IP"
     fi
     echo ""
-    echo "Credentials:"
-    echo "  Username: ${OPENCODE_USERNAME:-opencode}"
-    echo "  Password: [provided during setup]"
+    if [ "$USE_OAUTH2_PROXY" = true ]; then
+        echo "Authentication: Google OAuth2 via oauth2-proxy"
+        echo "  Users are redirected to Google login before accessing OpenCode."
+    else
+        echo "Credentials:"
+        echo "  Username: ${OPENCODE_USERNAME:-opencode}"
+        echo "  Password: [provided during setup]"
+    fi
     echo ""
     echo "Caddy Status:"
     systemctl status caddy --no-pager | head -5
     echo ""
+    if [ "$USE_OAUTH2_PROXY" = true ]; then
+        echo "oauth2-proxy Status:"
+        systemctl status oauth2-proxy --no-pager | head -5
+        echo ""
+    fi
     echo "Features:"
     echo "  ✅ HTTPS enabled"
-    echo "  ✅ Password protection via OpenCode authentication"
+    if [ "$USE_OAUTH2_PROXY" = true ]; then
+        echo "  ✅ Google OAuth2 login via oauth2-proxy"
+    else
+        echo "  ✅ Password protection via OpenCode authentication"
+    fi
     echo "  ✅ OpenCode port (${OPENCODE_PORT}) not exposed publicly"
     if [ "$USE_IP_ONLY" = false ] && [ "$BEHIND_PROXY" = false ]; then
         echo "  ✅ Auto certificate renewal"

@@ -8,6 +8,7 @@ One command to setup AI coding agents on cloud servers (Hetzner, AWS, etc.) with
 - ✅ OpenCode installation for AI-powered coding
 - ✅ Optional Caddy reverse proxy with auto HTTPS
 - ✅ Password-protected access via OpenCode authentication
+- ✅ Google OAuth2 login via oauth2-proxy (optional, replaces password auth)
 - ✅ Support for both domain-based and IP-only configurations
 - ✅ Automatic firewall configuration
 - ✅ Zero-downtime certificate renewal
@@ -92,6 +93,36 @@ curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo 
   --password 'YourStrongPassword123!'
 ```
 
+### Setup with Caddy and Google OAuth2 Login
+
+Protect OpenCode with Google login using [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/). Users are redirected to Google sign-in before accessing OpenCode. **You must [create Google OAuth2 credentials](#google-cloud-console-setup) first.**
+
+**Recommended: Download and review first**
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh -o setup.sh
+less setup.sh  # Review the script
+sudo bash setup.sh \
+  --install-caddy \
+  --domain your.domain.com \
+  --oauth2-proxy \
+  --google-client-id 'YOUR_CLIENT_ID.apps.googleusercontent.com' \
+  --google-client-secret 'YOUR_CLIENT_SECRET' \
+  --cookie-secret 'YOUR16BYTESECRET' \
+  --allowed-email-domain 'yourcompany.com'
+```
+
+**One-line install (executes immediately)**
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo bash -s -- \
+  --install-caddy \
+  --domain your.domain.com \
+  --oauth2-proxy \
+  --google-client-id 'YOUR_CLIENT_ID.apps.googleusercontent.com' \
+  --google-client-secret 'YOUR_CLIENT_SECRET' \
+  --cookie-secret 'YOUR16BYTESECRET' \
+  --allowed-email-domain 'yourcompany.com'
+```
+
 > **Security Note**: Always review scripts before executing them, especially with sudo privileges. The "download and review first" method is recommended for production environments.
 
 ## Usage
@@ -107,10 +138,16 @@ curl -fsSL https://raw.githubusercontent.com/mikeboe/henry/main/setup.sh | sudo 
 | `--install-caddy` | Install and configure Caddy reverse proxy | No |
 | `--domain DOMAIN` | Domain name for Caddy (enables auto HTTPS) | With `--install-caddy` (or use `--ip-only`) |
 | `--username USERNAME` | Username for OpenCode web server (default: `opencode`) | No |
-| `--password PASSWORD` | Password for OpenCode web server | With `--install-caddy` |
+| `--password PASSWORD` | Password for OpenCode web server | With `--install-caddy` (not needed with `--oauth2-proxy`) |
 | `--port PORT` | OpenCode port (default: 4096) | No |
 | `--ip-only` | Configure Caddy for IP-only access with self-signed cert | No |
 | `--behind-proxy` | Configure Caddy for HTTP-only mode when behind a CDN/reverse proxy (prevents redirect loops) | No |
+| `--oauth2-proxy` | Enable oauth2-proxy with Google login for Caddy authentication | No |
+| `--google-client-id ID` | Google OAuth2 client ID | With `--oauth2-proxy` |
+| `--google-client-secret SECRET` | Google OAuth2 client secret | With `--oauth2-proxy` |
+| `--cookie-secret SECRET` | Cookie secret for oauth2-proxy (must be exactly 16, 24, or 32 characters) | With `--oauth2-proxy` |
+| `--allowed-email-domain DOMAIN` | Restrict Google login to users from this email domain (default: `*` = any Google account) | No |
+| `--allowed-email EMAIL` | Restrict Google login to a single specific email address | No |
 | `-h, --help` | Display help message | No |
 
 ## Examples
@@ -193,6 +230,36 @@ Override the default OpenCode username (default is `opencode`):
   --password 'SecurePassword123!'
 ```
 
+### 7. Google OAuth2 Login via oauth2-proxy
+
+Replace password authentication with Google login. Users must sign in with their Google account before accessing OpenCode:
+
+```bash
+./setup.sh \
+  --install-caddy \
+  --domain code.example.com \
+  --oauth2-proxy \
+  --google-client-id '123456789-abc.apps.googleusercontent.com' \
+  --google-client-secret 'GOCSPX-...' \
+  --cookie-secret 'a8f3k9s2b1n7m4q6' \
+  --allowed-email-domain 'yourcompany.com'
+```
+
+Restrict to a single email address instead of a whole domain:
+
+```bash
+./setup.sh \
+  --install-caddy \
+  --domain code.example.com \
+  --oauth2-proxy \
+  --google-client-id '123456789-abc.apps.googleusercontent.com' \
+  --google-client-secret 'GOCSPX-...' \
+  --cookie-secret 'a8f3k9s2b1n7m4q6' \
+  --allowed-email 'user@gmail.com'
+```
+
+See the [Google Cloud Console Setup](#google-cloud-console-setup) section for how to obtain your credentials.
+
 ## What Gets Installed
 
 ### Always Installed
@@ -209,6 +276,12 @@ Override the default OpenCode username (default is `opencode`):
 - Automatic HTTPS certificates (with domain) or self-signed certificates (IP-only)
 - Reverse proxy configuration
 - Firewall rules (UFW or firewalld)
+
+### With `--install-caddy --oauth2-proxy`
+All of the above, plus:
+- oauth2-proxy binary (downloaded from GitHub releases)
+- oauth2-proxy configuration at `/etc/oauth2-proxy/oauth2-proxy.cfg` (chmod 600)
+- oauth2-proxy systemd service
 
 ## Architecture
 
@@ -244,6 +317,17 @@ Browser → https://your.domain.com
     Caddy (80, auto_https off) → OpenCode (localhost:4096)
 ```
 
+### With Caddy and oauth2-proxy (--oauth2-proxy)
+```
+Browser → https://your.domain.com
+              ↓
+    Caddy (443)
+         ├── /oauth2/* → oauth2-proxy (localhost:4180)
+         └── /* → forward_auth oauth2-proxy → OpenCode (localhost:4096)
+                         ↓ (unauthenticated)
+               [Google Login Page] → Google OAuth2 → callback
+```
+
 ## Post-Installation
 
 ### Start OpenCode
@@ -273,6 +357,30 @@ When `--password` is provided during setup, the following environment variables 
 | `OPENCODE_SERVER_USERNAME` | Username for the OpenCode web server | No (defaults to `opencode`) |
 
 These variables are picked up by OpenCode when the `opencode-web` alias is run.
+
+### Managing oauth2-proxy
+
+**Check Status:**
+```bash
+sudo systemctl status oauth2-proxy
+```
+
+**Restart oauth2-proxy:**
+```bash
+sudo systemctl restart oauth2-proxy
+```
+
+**View Logs:**
+```bash
+sudo journalctl -u oauth2-proxy -f
+```
+
+**Update Configuration:**
+```bash
+sudo nano /etc/oauth2-proxy/oauth2-proxy.cfg
+# After editing, restart:
+sudo systemctl restart oauth2-proxy
+```
 
 ### Managing Caddy
 
@@ -329,10 +437,79 @@ opencode-web
 
 When using Caddy:
 - ✅ **HTTPS Encryption**: All traffic is encrypted
-- ✅ **Password Protection**: OpenCode authentication protects access
+- ✅ **Password Protection**: OpenCode authentication protects access (without `--oauth2-proxy`)
+- ✅ **Google OAuth2**: Google login via oauth2-proxy (with `--oauth2-proxy`)
 - ✅ **Port Isolation**: OpenCode port not exposed publicly
 - ✅ **Auto Certificate Renewal**: Let's Encrypt certificates auto-renew (domain mode)
 - ✅ **Firewall Configuration**: Only HTTPS/HTTP ports are opened
+
+## Google Cloud Console Setup
+
+Before running the setup script with `--oauth2-proxy`, you need to create OAuth2 credentials in the Google Cloud Console.
+
+### Step 1: Create a Google Cloud Project
+
+1. Go to [https://console.cloud.google.com/](https://console.cloud.google.com/)
+2. Click **Select a project** → **New Project**
+3. Enter a project name (e.g., `opencode-server`) and click **Create**
+
+### Step 2: Configure the OAuth Consent Screen
+
+1. In the left menu, go to **APIs & Services → OAuth consent screen**
+2. Select **External** (for personal use) or **Internal** (for Google Workspace organizations)
+3. Fill in the required fields:
+   - **App name**: e.g., `OpenCode`
+   - **User support email**: your email
+   - **Developer contact email**: your email
+4. Click **Save and Continue** through the remaining steps
+5. On the **Test users** step (for External apps), add the Google accounts that should have access
+
+### Step 3: Create OAuth2 Credentials
+
+1. Go to **APIs & Services → Credentials**
+2. Click **Create Credentials → OAuth client ID**
+3. Set **Application type** to **Web application**
+4. Enter a **Name** (e.g., `OpenCode Caddy`)
+5. Under **Authorized redirect URIs**, add:
+   ```
+   https://your.domain.com/oauth2/callback
+   ```
+   Replace `your.domain.com` with your actual domain. This must exactly match the `redirect_url` configured by the setup script.
+6. Click **Create**
+7. Copy the **Client ID** and **Client Secret** — you will pass these to the setup script
+
+### Step 4: Generate a Cookie Secret
+
+The cookie secret must be exactly **16, 24, or 32 characters**. Generate one with:
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(16)[:16])"
+```
+
+Or use any random 16/24/32-character string.
+
+### Step 5: Run the Setup Script
+
+```bash
+sudo bash setup.sh \
+  --install-caddy \
+  --domain your.domain.com \
+  --oauth2-proxy \
+  --google-client-id 'YOUR_CLIENT_ID.apps.googleusercontent.com' \
+  --google-client-secret 'YOUR_CLIENT_SECRET' \
+  --cookie-secret 'YOUR16BYTESECRET' \
+  --allowed-email-domain 'yourcompany.com'
+```
+
+**Options for restricting access:**
+
+| Goal | Flag |
+|------|------|
+| Allow any Google account | *(omit both flags)* |
+| Allow only `@yourcompany.com` accounts | `--allowed-email-domain yourcompany.com` |
+| Allow a single specific email | `--allowed-email user@gmail.com` |
+
+> **Note for IP-only mode (`--ip-only --oauth2-proxy`):** Google OAuth2 does not accept raw IP addresses as redirect URIs. You must use a domain. If you need IP-only access, consider using password authentication (`--password`) instead.
 
 ## Troubleshooting
 
@@ -407,6 +584,47 @@ sudo lsof -i :443
 sudo lsof -i :4096
 ```
 
+### oauth2-proxy Not Starting
+**Error**: oauth2-proxy service fails
+**Solution**: Check logs for errors:
+```bash
+sudo journalctl -u oauth2-proxy -n 50
+```
+
+Common causes:
+- Invalid `client_id` or `client_secret` — double-check the values from Google Cloud Console
+- Wrong `cookie_secret` length — it must be exactly 16, 24, or 32 characters
+- `redirect_url` mismatch — the URL in `/etc/oauth2-proxy/oauth2-proxy.cfg` must exactly match the **Authorized redirect URI** registered in Google Cloud Console
+
+### Google Login Redirects to Error Page
+**Error**: After Google login, redirected to an error page
+**Cause**: The `redirect_url` in the oauth2-proxy config does not match the **Authorized redirect URI** in Google Cloud Console.
+
+**Solution**:
+1. Check the configured redirect URL:
+   ```bash
+   grep redirect_url /etc/oauth2-proxy/oauth2-proxy.cfg
+   ```
+2. Go to [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials)
+3. Edit your OAuth 2.0 Client ID and ensure the **Authorized redirect URIs** list contains exactly the URL from step 1.
+
+### Access Denied After Google Login
+**Error**: oauth2-proxy shows "Access Denied" or "Unauthorized" after successful Google login
+**Cause**: The logged-in email does not match the configured restrictions.
+
+**Solution**: Check the email restriction in `/etc/oauth2-proxy/oauth2-proxy.cfg`:
+```bash
+sudo cat /etc/oauth2-proxy/oauth2-proxy.cfg
+```
+- If you used `--allowed-email-domain`, ensure the user's email ends with `@thatdomain.com`
+- If you used `--allowed-email`, ensure the exact email address matches
+- To allow all Google accounts, remove the restriction:
+  ```bash
+  sudo nano /etc/oauth2-proxy/oauth2-proxy.cfg
+  # Change to:  email_domains = [ "*" ]
+  sudo systemctl restart oauth2-proxy
+  ```
+
 ## Supported Operating Systems
 
 - ✅ Ubuntu/Debian (apt-based)
@@ -440,3 +658,7 @@ For issues or questions:
 - [Caddy Documentation](https://caddyserver.com/docs/)
 - [OpenCode Documentation](https://opencode.ai/docs/)
 - [Let's Encrypt](https://letsencrypt.org/)
+- [oauth2-proxy Documentation](https://oauth2-proxy.github.io/oauth2-proxy/)
+- [oauth2-proxy Caddy Integration](https://oauth2-proxy.github.io/oauth2-proxy/configuration/integrations/caddy)
+- [oauth2-proxy Google Provider](https://oauth2-proxy.github.io/oauth2-proxy/configuration/providers/google)
+- [Google Cloud Console](https://console.cloud.google.com/)
