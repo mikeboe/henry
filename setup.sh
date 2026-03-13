@@ -19,6 +19,16 @@ OAUTH2_COOKIE_SECRET=""
 OAUTH2_ALLOWED_EMAIL_DOMAIN=""
 OAUTH2_ALLOWED_EMAIL=""
 
+# Paperclip configuration (runs on port 3100)
+PAPERCLIP_DOMAIN=""
+PAPERCLIP_PASSWORD=""
+PAPERCLIP_USE_OAUTH2_PROXY=false
+PAPERCLIP_OAUTH2_GOOGLE_CLIENT_ID=""
+PAPERCLIP_OAUTH2_GOOGLE_CLIENT_SECRET=""
+PAPERCLIP_OAUTH2_COOKIE_SECRET=""
+PAPERCLIP_OAUTH2_ALLOWED_EMAIL_DOMAIN=""
+PAPERCLIP_OAUTH2_ALLOWED_EMAIL=""
+
 # Function to display usage
 usage() {
     echo "Usage: $0 [OPTIONS]"
@@ -37,6 +47,16 @@ usage() {
     echo "  --cookie-secret SECRET  Cookie secret for oauth2-proxy, 16/24/32 chars (required with --oauth2-proxy)"
     echo "  --allowed-email-domain D Restrict Google login to this email domain, e.g. yourcompany.com (default: * = any)"
     echo "  --allowed-email EMAIL   Restrict Google login to a specific email address"
+    echo ""
+    echo "Paperclip Options (for second service on port 3100):"
+    echo "  --paperclip-domain DOMAIN       Domain name for Paperclip service"
+    echo "  --paperclip-password PASSWORD   Password for Paperclip web server (required with --paperclip-domain, unless using --paperclip-oauth2-proxy)"
+    echo "  --paperclip-oauth2-proxy        Enable oauth2-proxy with Google login for Paperclip"
+    echo "  --paperclip-google-client-id ID Google OAuth2 client ID for Paperclip"
+    echo "  --paperclip-google-client-secret S Google OAuth2 client secret for Paperclip"
+    echo "  --paperclip-cookie-secret SECRET Cookie secret for Paperclip oauth2-proxy"
+    echo "  --paperclip-allowed-email-domain D Email domain restriction for Paperclip"
+    echo "  --paperclip-allowed-email EMAIL Specific email restriction for Paperclip"
     echo "  -h, --help              Display this help message"
     echo ""
     echo "Examples:"
@@ -54,6 +74,9 @@ usage() {
     echo ""
     echo "  # Setup with Caddy for IP-only access"
     echo "  $0 --install-caddy --ip-only --password 'SecurePass123!'"
+    echo ""
+    echo "  # Setup with both OpenCode and Paperclip on separate domains"
+    echo "  $0 --install-caddy --domain opencode.example.com --password 'Pass1' --paperclip-domain paperclip.example.com --paperclip-password 'Pass2'"
     echo ""
     exit 1
 }
@@ -113,6 +136,38 @@ while [[ $# -gt 0 ]]; do
             OAUTH2_ALLOWED_EMAIL="$2"
             shift 2
             ;;
+        --paperclip-domain)
+            PAPERCLIP_DOMAIN="$2"
+            shift 2
+            ;;
+        --paperclip-password)
+            PAPERCLIP_PASSWORD="$2"
+            shift 2
+            ;;
+        --paperclip-oauth2-proxy)
+            PAPERCLIP_USE_OAUTH2_PROXY=true
+            shift
+            ;;
+        --paperclip-google-client-id)
+            PAPERCLIP_OAUTH2_GOOGLE_CLIENT_ID="$2"
+            shift 2
+            ;;
+        --paperclip-google-client-secret)
+            PAPERCLIP_OAUTH2_GOOGLE_CLIENT_SECRET="$2"
+            shift 2
+            ;;
+        --paperclip-cookie-secret)
+            PAPERCLIP_OAUTH2_COOKIE_SECRET="$2"
+            shift 2
+            ;;
+        --paperclip-allowed-email-domain)
+            PAPERCLIP_OAUTH2_ALLOWED_EMAIL_DOMAIN="$2"
+            shift 2
+            ;;
+        --paperclip-allowed-email)
+            PAPERCLIP_OAUTH2_ALLOWED_EMAIL="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             ;;
@@ -147,6 +202,49 @@ if [ "$INSTALL_CADDY" = true ]; then
     
     if [ "$BEHIND_PROXY" = true ] && [ -z "$DOMAIN" ]; then
         echo "Error: --domain is required when using --behind-proxy"
+        exit 1
+    fi
+fi
+
+# Validate Paperclip options
+if [ -n "$PAPERCLIP_DOMAIN" ]; then
+    if [ "$INSTALL_CADDY" = false ]; then
+        echo "Error: --paperclip-domain requires --install-caddy"
+        exit 1
+    fi
+
+    if [ "$PAPERCLIP_USE_OAUTH2_PROXY" = false ] && [ -z "$PAPERCLIP_PASSWORD" ]; then
+        echo "Error: --paperclip-password is required when using --paperclip-domain (unless using --paperclip-oauth2-proxy)"
+        exit 1
+    fi
+
+    if [ "$USE_IP_ONLY" = true ]; then
+        echo "Error: Cannot use --paperclip-domain with --ip-only"
+        exit 1
+    fi
+fi
+
+# Validate Paperclip oauth2-proxy options
+if [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
+    if [ -z "$PAPERCLIP_DOMAIN" ]; then
+        echo "Error: --paperclip-oauth2-proxy requires --paperclip-domain"
+        exit 1
+    fi
+    if [ -z "$PAPERCLIP_OAUTH2_GOOGLE_CLIENT_ID" ]; then
+        echo "Error: --paperclip-google-client-id is required when using --paperclip-oauth2-proxy"
+        exit 1
+    fi
+    if [ -z "$PAPERCLIP_OAUTH2_GOOGLE_CLIENT_SECRET" ]; then
+        echo "Error: --paperclip-google-client-secret is required when using --paperclip-oauth2-proxy"
+        exit 1
+    fi
+    if [ -z "$PAPERCLIP_OAUTH2_COOKIE_SECRET" ]; then
+        echo "Error: --paperclip-cookie-secret is required when using --paperclip-oauth2-proxy (must be 16, 24, or 32 characters)"
+        exit 1
+    fi
+    PAPERCLIP_COOKIE_SECRET_LEN=${#PAPERCLIP_OAUTH2_COOKIE_SECRET}
+    if [ "$PAPERCLIP_COOKIE_SECRET_LEN" -ne 16 ] && [ "$PAPERCLIP_COOKIE_SECRET_LEN" -ne 24 ] && [ "$PAPERCLIP_COOKIE_SECRET_LEN" -ne 32 ]; then
+        echo "Error: --paperclip-cookie-secret must be exactly 16, 24, or 32 characters (got ${PAPERCLIP_COOKIE_SECRET_LEN})"
         exit 1
     fi
 fi
@@ -254,8 +352,8 @@ if [ "$INSTALL_CADDY" = true ]; then
     fi
 fi
 
-# Step 6a: Install oauth2-proxy (if requested)
-if [ "$USE_OAUTH2_PROXY" = true ]; then
+# Step 6a: Install oauth2-proxy (if requested for either service)
+if [ "$USE_OAUTH2_PROXY" = true ] || [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
     echo "Installing oauth2-proxy..."
     OAUTH2_PROXY_ARCH="amd64"
     case "$(uname -m)" in
@@ -331,6 +429,48 @@ http://${DOMAIN} {
     }
 }
 EOF
+
+        # Add Paperclip configuration if domain is specified
+        if [ -n "$PAPERCLIP_DOMAIN" ]; then
+            if [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
+                cat >> /etc/caddy/Caddyfile << EOF
+
+http://${PAPERCLIP_DOMAIN} {
+    handle /oauth2/* {
+        reverse_proxy localhost:4181 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle {
+        forward_auth localhost:4181 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-User X-Auth-Request-Email
+            @oauth2_401 status 401
+            handle_response @oauth2_401 {
+                redir * /oauth2/sign_in?rd=https://{host}{uri}
+            }
+        }
+        reverse_proxy localhost:3100 {
+            header_up Host {upstream_hostport}
+            header_up X-Forwarded-Proto https
+            flush_interval -1
+        }
+    }
+}
+EOF
+            else
+                cat >> /etc/caddy/Caddyfile << EOF
+
+http://${PAPERCLIP_DOMAIN} {
+    reverse_proxy localhost:3100 {
+        header_up Host {upstream_hostport}
+        header_up X-Forwarded-Proto https
+        flush_interval -1
+    }
+}
+EOF
+            fi
+        fi
     elif [ "$USE_OAUTH2_PROXY" = true ]; then
         # Domain with auto HTTPS and oauth2-proxy
         cat > /etc/caddy/Caddyfile << EOF
@@ -355,6 +495,46 @@ ${DOMAIN} {
     }
 }
 EOF
+
+        # Add Paperclip configuration if domain is specified
+        if [ -n "$PAPERCLIP_DOMAIN" ]; then
+            if [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
+                cat >> /etc/caddy/Caddyfile << EOF
+
+${PAPERCLIP_DOMAIN} {
+    handle /oauth2/* {
+        reverse_proxy localhost:4181
+    }
+    handle {
+        forward_auth localhost:4181 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-User X-Auth-Request-Email
+            @oauth2_401 status 401
+            handle_response @oauth2_401 {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
+        }
+        reverse_proxy localhost:3100 {
+            header_up Host {upstream_hostport}
+            header_up X-Forwarded-Proto {scheme}
+            flush_interval -1
+        }
+    }
+}
+EOF
+            else
+                cat >> /etc/caddy/Caddyfile << EOF
+
+${PAPERCLIP_DOMAIN} {
+    reverse_proxy localhost:3100 {
+        header_up Host {upstream_hostport}
+        header_up X-Forwarded-Proto {scheme}
+        flush_interval -1
+    }
+}
+EOF
+            fi
+        fi
     elif [ "$USE_IP_ONLY" = true ]; then
         # IP-only configuration with self-signed certificate
         cat > /etc/caddy/Caddyfile << EOF
@@ -393,6 +573,20 @@ http://${DOMAIN} {
     }
 }
 EOF
+
+        # Add Paperclip configuration if domain is specified
+        if [ -n "$PAPERCLIP_DOMAIN" ]; then
+            cat >> /etc/caddy/Caddyfile << EOF
+
+http://${PAPERCLIP_DOMAIN} {
+    reverse_proxy localhost:3100 {
+        header_up Host {upstream_hostport}
+        header_up X-Forwarded-Proto https
+        flush_interval -1
+    }
+}
+EOF
+        fi
     else
         # Domain configuration with auto HTTPS
         cat > /etc/caddy/Caddyfile << EOF
@@ -404,6 +598,20 @@ ${DOMAIN} {
     }
 }
 EOF
+
+        # Add Paperclip configuration if domain is specified
+        if [ -n "$PAPERCLIP_DOMAIN" ]; then
+            cat >> /etc/caddy/Caddyfile << EOF
+
+${PAPERCLIP_DOMAIN} {
+    reverse_proxy localhost:3100 {
+        header_up Host {upstream_hostport}
+        header_up X-Forwarded-Proto {scheme}
+        flush_interval -1
+    }
+}
+EOF
+        fi
     fi
     
     # Validate Caddyfile
@@ -459,28 +667,30 @@ EOF
 fi
 
 # Step 9a: Configure oauth2-proxy (if requested)
-if [ "$USE_OAUTH2_PROXY" = true ]; then
-    echo "Configuring oauth2-proxy..."
-    
+if [ "$USE_OAUTH2_PROXY" = true ] || [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
     mkdir -p /etc/oauth2-proxy
-    
+fi
+
+if [ "$USE_OAUTH2_PROXY" = true ]; then
+    echo "Configuring oauth2-proxy for OpenCode..."
+
     # Determine the redirect URL (IP-only is blocked at validation; only domain modes reach here)
     OAUTH2_REDIRECT_URL="https://${DOMAIN}/oauth2/callback"
-    
+
     # Build the email restriction config lines
     if [ -n "$OAUTH2_ALLOWED_EMAIL" ]; then
         # Restrict to a specific email address via an authenticated emails file
-        printf '%s\n' "$OAUTH2_ALLOWED_EMAIL" > /etc/oauth2-proxy/authenticated-emails.txt
-        chmod 600 /etc/oauth2-proxy/authenticated-emails.txt
-        EMAIL_CONFIG="authenticated_emails_file = \"/etc/oauth2-proxy/authenticated-emails.txt\""
+        printf '%s\n' "$OAUTH2_ALLOWED_EMAIL" > /etc/oauth2-proxy/authenticated-emails-opencode.txt
+        chmod 600 /etc/oauth2-proxy/authenticated-emails-opencode.txt
+        EMAIL_CONFIG="authenticated_emails_file = \"/etc/oauth2-proxy/authenticated-emails-opencode.txt\""
     elif [ -n "$OAUTH2_ALLOWED_EMAIL_DOMAIN" ]; then
         EMAIL_CONFIG="email_domains = [ \"${OAUTH2_ALLOWED_EMAIL_DOMAIN}\" ]"
     else
         EMAIL_CONFIG="email_domains = [ \"*\" ]"
     fi
-    
+
     # Write the config file (credentials stored with chmod 600)
-    cat > /etc/oauth2-proxy/oauth2-proxy.cfg << EOF
+    cat > /etc/oauth2-proxy/oauth2-proxy-opencode.cfg << EOF
 provider = "google"
 client_id = "${OAUTH2_GOOGLE_CLIENT_ID}"
 client_secret = "${OAUTH2_GOOGLE_CLIENT_SECRET}"
@@ -491,24 +701,24 @@ http_address = "127.0.0.1:4180"
 reverse_proxy = true
 skip_provider_button = true
 EOF
-    chmod 600 /etc/oauth2-proxy/oauth2-proxy.cfg
-    
+    chmod 600 /etc/oauth2-proxy/oauth2-proxy-opencode.cfg
+
     # Create systemd service for oauth2-proxy
     cat > /etc/systemd/system/oauth2-proxy.service << 'SERVICE_EOF'
 [Unit]
-Description=oauth2-proxy
+Description=oauth2-proxy for OpenCode
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/oauth2-proxy --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+ExecStart=/usr/local/bin/oauth2-proxy --config=/etc/oauth2-proxy/oauth2-proxy-opencode.cfg
 Restart=on-failure
 RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
 SERVICE_EOF
-    
+
     systemctl daemon-reload > /dev/null 2>&1
     if ! systemctl enable oauth2-proxy > /dev/null 2>&1; then
         echo "Warning: Failed to enable oauth2-proxy service for automatic startup on boot."
@@ -519,16 +729,81 @@ SERVICE_EOF
     fi
 fi
 
+if [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
+    echo "Configuring oauth2-proxy for Paperclip..."
+
+    # Determine the redirect URL
+    PAPERCLIP_OAUTH2_REDIRECT_URL="https://${PAPERCLIP_DOMAIN}/oauth2/callback"
+
+    # Build the email restriction config lines
+    if [ -n "$PAPERCLIP_OAUTH2_ALLOWED_EMAIL" ]; then
+        # Restrict to a specific email address via an authenticated emails file
+        printf '%s\n' "$PAPERCLIP_OAUTH2_ALLOWED_EMAIL" > /etc/oauth2-proxy/authenticated-emails-paperclip.txt
+        chmod 600 /etc/oauth2-proxy/authenticated-emails-paperclip.txt
+        PAPERCLIP_EMAIL_CONFIG="authenticated_emails_file = \"/etc/oauth2-proxy/authenticated-emails-paperclip.txt\""
+    elif [ -n "$PAPERCLIP_OAUTH2_ALLOWED_EMAIL_DOMAIN" ]; then
+        PAPERCLIP_EMAIL_CONFIG="email_domains = [ \"${PAPERCLIP_OAUTH2_ALLOWED_EMAIL_DOMAIN}\" ]"
+    else
+        PAPERCLIP_EMAIL_CONFIG="email_domains = [ \"*\" ]"
+    fi
+
+    # Write the config file (credentials stored with chmod 600)
+    cat > /etc/oauth2-proxy/oauth2-proxy-paperclip.cfg << EOF
+provider = "google"
+client_id = "${PAPERCLIP_OAUTH2_GOOGLE_CLIENT_ID}"
+client_secret = "${PAPERCLIP_OAUTH2_GOOGLE_CLIENT_SECRET}"
+redirect_url = "${PAPERCLIP_OAUTH2_REDIRECT_URL}"
+cookie_secret = "${PAPERCLIP_OAUTH2_COOKIE_SECRET}"
+${PAPERCLIP_EMAIL_CONFIG}
+http_address = "127.0.0.1:4181"
+reverse_proxy = true
+skip_provider_button = true
+EOF
+    chmod 600 /etc/oauth2-proxy/oauth2-proxy-paperclip.cfg
+
+    # Create systemd service for paperclip oauth2-proxy
+    cat > /etc/systemd/system/oauth2-proxy-paperclip.service << 'SERVICE_EOF'
+[Unit]
+Description=oauth2-proxy for Paperclip
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/oauth2-proxy --config=/etc/oauth2-proxy/oauth2-proxy-paperclip.cfg
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+    systemctl daemon-reload > /dev/null 2>&1
+    if ! systemctl enable oauth2-proxy-paperclip > /dev/null 2>&1; then
+        echo "Warning: Failed to enable oauth2-proxy-paperclip service for automatic startup on boot."
+    fi
+    if ! systemctl restart oauth2-proxy-paperclip > /dev/null 2>&1; then
+        echo "Error: Failed to start oauth2-proxy-paperclip. Check logs with: sudo journalctl -u oauth2-proxy-paperclip -n 50"
+        exit 1
+    fi
+fi
+
 # Step 10: Add aliases to bashrc
 echo "Creating shortcuts..."
 
 # Export OpenCode auth env vars to a secure file if provided
-if [ -n "$OPENCODE_PASSWORD" ]; then
+if [ -n "$OPENCODE_PASSWORD" ] || [ -n "$PAPERCLIP_PASSWORD" ]; then
     touch ~/.opencode_env
     chmod 600 ~/.opencode_env
-    printf 'export OPENCODE_SERVER_PASSWORD=%q\n' "$OPENCODE_PASSWORD" > ~/.opencode_env
-    if [ -n "$OPENCODE_USERNAME" ]; then
-        printf 'export OPENCODE_SERVER_USERNAME=%q\n' "$OPENCODE_USERNAME" >> ~/.opencode_env
+
+    if [ -n "$OPENCODE_PASSWORD" ]; then
+        printf 'export OPENCODE_SERVER_PASSWORD=%q\n' "$OPENCODE_PASSWORD" > ~/.opencode_env
+        if [ -n "$OPENCODE_USERNAME" ]; then
+            printf 'export OPENCODE_SERVER_USERNAME=%q\n' "$OPENCODE_USERNAME" >> ~/.opencode_env
+        fi
+    fi
+
+    if [ -n "$PAPERCLIP_PASSWORD" ]; then
+        printf 'export PAPERCLIP_SERVER_PASSWORD=%q\n' "$PAPERCLIP_PASSWORD" >> ~/.opencode_env
     fi
 fi
 
@@ -555,43 +830,71 @@ echo ""
 if [ "$INSTALL_CADDY" = true ]; then
     echo "=== Caddy Reverse Proxy Configured ==="
     echo ""
+
+    # OpenCode configuration
+    echo "OpenCode:"
     if [ "$USE_IP_ONLY" = true ]; then
-        echo "Access URL: https://<your-server-ip>"
-        echo "Note: You'll see a browser warning (self-signed certificate)"
+        echo "  Access URL: https://<your-server-ip>"
+        echo "  Note: You'll see a browser warning (self-signed certificate)"
     elif [ "$BEHIND_PROXY" = true ]; then
-        echo "Access URL: https://${DOMAIN} (via your CDN/proxy)"
-        echo "Note: Caddy is configured for HTTP-only; your CDN/proxy handles TLS"
-        echo "Note: Ensure your CDN/proxy forwards requests to this server on port 80"
+        echo "  Access URL: https://${DOMAIN} (via your CDN/proxy)"
+        echo "  Note: Caddy is configured for HTTP-only; your CDN/proxy handles TLS"
+        echo "  Note: Ensure your CDN/proxy forwards requests to this server on port 80"
     else
-        echo "Access URL: https://${DOMAIN}"
-        echo "Note: Ensure DNS for ${DOMAIN} points to this server's IP"
+        echo "  Access URL: https://${DOMAIN}"
+        echo "  Note: Ensure DNS for ${DOMAIN} points to this server's IP"
     fi
-    echo ""
+
     if [ "$USE_OAUTH2_PROXY" = true ]; then
-        echo "Authentication: Google OAuth2 via oauth2-proxy"
-        echo "  Users are redirected to Google login before accessing OpenCode."
+        echo "  Authentication: Google OAuth2 via oauth2-proxy"
     else
-        echo "Credentials:"
-        echo "  Username: ${OPENCODE_USERNAME:-opencode}"
-        echo "  Password: [provided during setup]"
+        echo "  Authentication: Password (username: ${OPENCODE_USERNAME:-opencode})"
     fi
     echo ""
+
+    # Paperclip configuration
+    if [ -n "$PAPERCLIP_DOMAIN" ]; then
+        echo "Paperclip:"
+        if [ "$BEHIND_PROXY" = true ]; then
+            echo "  Access URL: https://${PAPERCLIP_DOMAIN} (via your CDN/proxy)"
+        else
+            echo "  Access URL: https://${PAPERCLIP_DOMAIN}"
+            echo "  Note: Ensure DNS for ${PAPERCLIP_DOMAIN} points to this server's IP"
+        fi
+
+        if [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
+            echo "  Authentication: Google OAuth2 via oauth2-proxy"
+        else
+            echo "  Authentication: Password"
+        fi
+        echo ""
+    fi
+
     echo "Caddy Status:"
     systemctl status caddy --no-pager | head -5
     echo ""
+
     if [ "$USE_OAUTH2_PROXY" = true ]; then
-        echo "oauth2-proxy Status:"
+        echo "oauth2-proxy (OpenCode) Status:"
         systemctl status oauth2-proxy --no-pager | head -5
         echo ""
     fi
+
+    if [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
+        echo "oauth2-proxy (Paperclip) Status:"
+        systemctl status oauth2-proxy-paperclip --no-pager | head -5
+        echo ""
+    fi
+
     echo "Features:"
     echo "  ✅ HTTPS enabled"
-    if [ "$USE_OAUTH2_PROXY" = true ]; then
+    if [ "$USE_OAUTH2_PROXY" = true ] || [ "$PAPERCLIP_USE_OAUTH2_PROXY" = true ]; then
         echo "  ✅ Google OAuth2 login via oauth2-proxy"
-    else
-        echo "  ✅ Password protection via OpenCode authentication"
     fi
     echo "  ✅ OpenCode port (${OPENCODE_PORT}) not exposed publicly"
+    if [ -n "$PAPERCLIP_DOMAIN" ]; then
+        echo "  ✅ Paperclip port (3100) not exposed publicly"
+    fi
     if [ "$USE_IP_ONLY" = false ] && [ "$BEHIND_PROXY" = false ]; then
         echo "  ✅ Auto certificate renewal"
     fi
@@ -611,7 +914,7 @@ if [ "$INSTALL_CADDY" = false ]; then
     echo "   opencode-web"
     echo "   Open: http://<your-server-ip>:4096"
 else
-    echo "Start web interface:"
+    echo "Start OpenCode web interface:"
     echo "   opencode-web"
     if [ "$USE_IP_ONLY" = true ]; then
         echo "   Access via: https://<your-server-ip>"
@@ -622,3 +925,14 @@ else
     fi
 fi
 echo ""
+
+if [ -n "$PAPERCLIP_DOMAIN" ]; then
+    echo "Access Paperclip:"
+    if [ "$BEHIND_PROXY" = true ]; then
+        echo "   https://${PAPERCLIP_DOMAIN} (via your CDN/proxy)"
+    else
+        echo "   https://${PAPERCLIP_DOMAIN}"
+    fi
+    echo "   Note: Ensure Paperclip service is running on port 3100"
+    echo ""
+fi
