@@ -286,12 +286,12 @@ echo ""
 
 # Step 1: Update System
 echo "Updating system..."
-apt update -y > /dev/null 2>&1
-apt upgrade -y > /dev/null 2>&1
+apt update -y
+apt upgrade -y
 
 # Step 2: Install essentials (Docker, Tmux, Git, Python, Compilers)
 echo "Installing essentials..."
-apt install -y tmux git curl build-essential python3-pip unzip docker.io > /dev/null 2>&1
+apt install -y tmux git curl build-essential python3-pip unzip docker.io
 
 # Install GO
 echo "Installing Go..."
