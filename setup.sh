@@ -197,12 +197,18 @@ apt install -y tmux git curl build-essential python3-pip unzip docker.io > /dev/
 
 # Install GO
 echo "Installing Go..."
+GO_ARCH="amd64"
+case "$(uname -m)" in
+    aarch64|arm64) GO_ARCH="arm64" ;;
+esac
+echo "Detected architecture: $GO_ARCH"
 echo "Downloading Go 1.26.1..."
-curl -LO https://go.dev/dl/go1.26.1.linux-amd64.tar.gz
-rm -rf /usr/local/go && tar -C /usr/local -xzf go1.26.1.linux-amd64.tar.gz
-rm go1.26.1.linux-amd64.tar.gz
+curl -LO "https://go.dev/dl/go1.26.1.linux-${GO_ARCH}.tar.gz"
+rm -rf /usr/local/go && tar -C /usr/local -xzf "go1.26.1.linux-${GO_ARCH}.tar.gz"
+rm "go1.26.1.linux-${GO_ARCH}.tar.gz"
 export PATH=$PATH:/usr/local/go/bin
-go version > /dev/null 2>&1
+echo "Verifying Go installation..."
+/usr/local/go/bin/go version
 
 # Step 3: Install NVM (Node Version Manager)
 echo "Installing NVM..."
