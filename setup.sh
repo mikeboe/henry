@@ -203,6 +203,7 @@ case "$(uname -m)" in
 esac
 echo "Detected architecture: $GO_ARCH"
 echo "Downloading Go 1.26.1..."
+echo "URL: https://go.dev/dl/go1.26.1.linux-${GO_ARCH}.tar.gz"
 curl -LO "https://go.dev/dl/go1.26.1.linux-${GO_ARCH}.tar.gz"
 rm -rf /usr/local/go && tar -C /usr/local -xzf "go1.26.1.linux-${GO_ARCH}.tar.gz"
 rm "go1.26.1.linux-${GO_ARCH}.tar.gz"
