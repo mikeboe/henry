@@ -291,7 +291,7 @@ apt upgrade -y
 
 # Step 2: Install essentials (Docker, Tmux, Git, Python, Compilers)
 echo "Installing essentials..."
-apt install -y tmux git curl build-essential python3-pip unzip docker.io
+apt install -y tmux git curl build-essential python3-pip unzip
 
 # Install GO
 echo "Installing Go..."
