@@ -310,7 +310,9 @@ if [ "$INSTALL_CADDY" = true ]; then
 
 http://${DOMAIN} {
     handle /oauth2/* {
-        reverse_proxy localhost:4180
+        reverse_proxy localhost:4180 {
+            header_up X-Forwarded-Proto https
+        }
     }
     handle {
         forward_auth localhost:4180 {
