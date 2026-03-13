@@ -197,6 +197,7 @@ apt install -y tmux git curl build-essential python3-pip unzip docker.io > /dev/
 
 # Install GO
 echo "Installing Go..."
+echo "Downloading Go 1.26.1..."
 curl -LO https://go.dev/dl/go1.26.1.linux-amd64.tar.gz
 rm -rf /usr/local/go && tar -C /usr/local -xzf go1.26.1.linux-amd64.tar.gz
 rm go1.26.1.linux-amd64.tar.gz
